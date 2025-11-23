@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Social Campaign Cockpit V5.4 (Fixed)</title>
+    <title>Social Campaign Cockpit V5.5 (Excel Export)</title>
     
     <!-- 1. STYLING (Tailwind CSS) -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -52,13 +52,14 @@
             MessageCircle: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>,
             Users: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
             Video: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>,
-            TrendingUp: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            TrendingUp: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+            ChevronDown: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         };
 
         const { 
             CheckCircle, Copy, Download, Plus, Trash2, Target, Eye, 
             MousePointer2, MessageCircle, TrendingUp, Users, Video, 
-            Upload, Settings, X, ArrowRight, AlertTriangle, Save
+            Upload, Settings, X, ArrowRight, AlertTriangle, Save, ChevronDown
         } = Icons;
 
         // --- CONFIGURATION ---
@@ -254,6 +255,7 @@
                 return [DEFAULT_ROW];
             });
             const [lastSaved, setLastSaved] = useState(null);
+            const [exportMenuOpen, setExportMenuOpen] = useState(false);
             
             const fileInputRef = useRef(null);
             const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
@@ -361,7 +363,7 @@
                     const ctaVal = (mappings.cta > -1 && cols[mappings.cta]) ? String(cols[mappings.cta]) : 'Learn More';
 
                     newRows.push({
-                        id: Date.now() + i + Math.random(), // Unique ID fix
+                        id: Date.now() + i + Math.random(),
                         code: code || '', 
                         platform: plat, 
                         type: 'Static', 
@@ -387,6 +389,33 @@
                 ].join(","))].join("\n");
                 const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csvContent], {type:'text/csv'}));
                 link.download = "campaign_export.csv"; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                setExportMenuOpen(false);
+            };
+
+            const exportXLSX = async () => {
+                try {
+                    const XLSX = await loadXLSXLibrary();
+                    const headers = ["Code", "Platform", "Type", "KPI", "Button/CTA", "Primary Text", "Headline", "Link Description", "Visual Text", "Notes"];
+                    const data = rows.map(r => ({
+                        "Code": r.code || "",
+                        "Platform": r.platform,
+                        "Type": r.type,
+                        "KPI": r.kpi,
+                        "Button/CTA": r.cta,
+                        "Primary Text": r.primaryText || "",
+                        "Headline": r.headline || "",
+                        "Link Description": r.linkDesc || "",
+                        "Visual Text": r.visualText || "",
+                        "Notes": r.notes || ""
+                    }));
+                    const worksheet = XLSX.utils.json_to_sheet(data, { header: headers });
+                    const workbook = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(workbook, worksheet, "Campaigns");
+                    XLSX.writeFile(workbook, "campaign_export.xlsx");
+                    setExportMenuOpen(false);
+                } catch (err) {
+                    alert("Error exporting Excel: " + err.message);
+                }
             };
 
             return (
@@ -395,7 +424,7 @@
                         <div className="max-w-[1800px] mx-auto flex justify-between items-center">
                             <div>
                                 <h1 className="text-xl font-bold flex items-center gap-2 text-slate-800"><Target className="w-6 h-6 text-indigo-600"/> Social Campaign Cockpit</h1>
-                                <p className="text-xs text-slate-500 mt-1">V5.4: Stable (Fixed Import)</p>
+                                <p className="text-xs text-slate-500 mt-1">V5.5: Stable (Excel Export)</p>
                             </div>
                             <div className="flex items-center gap-3">
                                 {lastSaved && <span className="text-[10px] text-green-600 font-medium flex items-center gap-1 animate-pulse"><Save className="w-3 h-3" /> Saved</span>}
@@ -403,7 +432,18 @@
                                 <div className="h-6 w-px bg-slate-200 mx-1"></div>
                                 <input type="file" accept=".csv, .xlsx, .xls" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
                                 <button onClick={() => fileInputRef.current.click()} disabled={isLoadingLibrary} className="flex items-center gap-2 px-4 py-2 bg-white text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 font-medium text-sm disabled:opacity-50"><Upload className="w-4 h-4" /> {isLoadingLibrary?'Loading...':'Import'}</button>
-                                <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium text-sm shadow-sm"><Download className="w-4 h-4" /> Export</button>
+                                
+                                <div className="relative">
+                                    <button onClick={() => setExportMenuOpen(!exportMenuOpen)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium text-sm shadow-sm">
+                                        <Download className="w-4 h-4" /> Export <ChevronDown className="w-4 h-4" />
+                                    </button>
+                                    {exportMenuOpen && (
+                                        <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-50 border border-slate-100 py-1">
+                                            <button onClick={exportCSV} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Export as CSV</button>
+                                            <button onClick={exportXLSX} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Export as Excel (.xlsx)</button>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </header>
