@@ -13,7 +13,11 @@ import {
   Users,
   Video,
   Upload,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Settings,
+  X,
+  ArrowRight,
+  AlertTriangle
 } from 'lucide-react';
 
 /**
@@ -71,10 +75,26 @@ const DEFAULT_ROW = {
   notes: ''
 };
 
+// Application Fields available for mapping
+const APP_FIELDS = [
+  { key: 'code', label: 'Campaign Code / Name', required: false },
+  { key: 'platform', label: 'Platform (FB, IG, LI)', required: false },
+  { key: 'type', label: 'Format (Static, Video)', required: false },
+  { key: 'primaryText', label: 'Primary Text (Body)', required: true },
+  { key: 'headline', label: 'Headline', required: false },
+  { key: 'linkDesc', label: 'Link Description', required: false },
+  { key: 'visualText', label: 'Visual Text', required: false },
+  { key: 'notes', label: 'Notes', required: false }
+];
+
 const App = () => {
   const [rows, setRows] = useState([DEFAULT_ROW]);
   const fileInputRef = useRef(null);
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
+
+  // Import Wizard State
+  const [importWizardData, setImportWizardData] = useState(null); // { headers: [], data: [], mappings: {} }
+  const [showImportModal, setShowImportModal] = useState(false);
 
   const addRow = () => {
     const newRow = { ...DEFAULT_ROW, id: Date.now() };
@@ -105,7 +125,7 @@ const App = () => {
     setRows([...rows, newRow]);
   };
 
-  // --- IMPORT LOGIC (CSV & XLSX) ---
+  // --- IMPORT LOGIC (Step 1: File Reading) ---
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -113,15 +133,11 @@ const App = () => {
     if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
       await processXLSX(file);
     } else {
-      // Default to CSV
       const reader = new FileReader();
-      reader.onload = (e) => {
-        processCSV(e.target.result);
-      };
+      reader.onload = (e) => processCSV(e.target.result);
       reader.readAsText(file);
     }
     
-    // Reset input
     if (fileInputRef.current) fileInputRef.current.value = ''; 
   };
 
@@ -155,11 +171,8 @@ const App = () => {
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }); // Array of arrays
-        
-        if (json.length > 0) {
-           processArrayData(json);
-        }
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+        if (json.length > 0) analyzeImportData(json);
       };
       reader.readAsArrayBuffer(file);
     } catch (err) {
@@ -185,29 +198,29 @@ const App = () => {
     };
     const lines = csvText.split(/\r\n|\n/).filter(line => line.trim() !== '');
     const data = lines.map(parseCSVLine);
-    processArrayData(data);
+    analyzeImportData(data);
   };
 
-  // Shared processing logic for both CSV and XLSX
-  const processArrayData = (rowsArray) => {
+  // --- IMPORT LOGIC (Step 2: Analysis & Mapping Guess) ---
+  const analyzeImportData = (rowsArray) => {
     if (rowsArray.length < 2) {
         alert("File seems empty or invalid.");
         return;
     }
 
-    // Extract headers (first row)
-    const headers = rowsArray[0].map(h => String(h).toLowerCase().trim());
+    const headers = rowsArray[0].map(h => String(h).trim());
+    const lowerHeaders = headers.map(h => h.toLowerCase());
     
-    // Fuzzy Mapping
-    const mappings = {
+    // Fuzzy Mappings
+    const initialMappings = {
         code: -1,
+        platform: -1,
+        type: -1,
         primaryText: -1,
         headline: -1,
         linkDesc: -1,
         visualText: -1,
-        notes: -1,
-        platform: -1,
-        type: -1
+        notes: -1
     };
 
     const keywords = {
@@ -221,40 +234,51 @@ const App = () => {
         type: ['type', 'format', 'soort', 'vorm']
     };
 
-    // Determine mappings
-    headers.forEach((header, index) => {
+    lowerHeaders.forEach((header, index) => {
         for (const [field, keys] of Object.entries(keywords)) {
-            if (mappings[field] === -1 && keys.some(k => header.includes(k))) {
-                mappings[field] = index;
+            if (initialMappings[field] === -1 && keys.some(k => header.includes(k))) {
+                initialMappings[field] = index;
             }
         }
     });
 
+    // Store analysis results and Open Modal
+    setImportWizardData({
+      headers: headers,
+      data: rowsArray.slice(1), // Remove header row
+      mappings: initialMappings
+    });
+    setShowImportModal(true);
+  };
+
+  // --- IMPORT LOGIC (Step 3: Finalize) ---
+  const finalizeImport = (finalMappings) => {
+    const { data } = importWizardData;
     const newRows = [];
-    for (let i = 1; i < rowsArray.length; i++) {
-        const columns = rowsArray[i];
+
+    for (let i = 0; i < data.length; i++) {
+        const columns = data[i];
         if (columns.length < 1) continue;
 
-        let code = mappings.code > -1 ? columns[mappings.code] : columns[0]; // Default to col 0 if no code found
+        let code = finalMappings.code > -1 ? columns[finalMappings.code] : columns[0];
         let platform = 'Facebook';
         let type = 'Static';
         
-        // --- INTELLIGENT PARSING ---
-        // 1. Try explicit columns
-        if (mappings.platform > -1) platform = normalizePlatform(columns[mappings.platform]);
-        if (mappings.type > -1) type = normalizeType(columns[mappings.type]);
+        // Intelligent Parsing based on final Mapped Columns
+        if (finalMappings.platform > -1) platform = normalizePlatform(columns[finalMappings.platform]);
+        if (finalMappings.type > -1) type = normalizeType(columns[finalMappings.type]);
 
-        // 2. Fallback: Detect Platform/Type from the 'Code' string if strictly needed
+        // Fallback: Detect Platform/Type from 'Code' if mapped columns are empty or not mapped
         const codeStr = String(code).toLowerCase();
         
-        if (mappings.platform === -1) {
+        if (finalMappings.platform === -1) {
             if (codeStr.includes('facebook') || codeStr.includes(' fb ')) platform = 'Facebook';
             else if (codeStr.includes('instagram') || codeStr.includes(' insta ') || codeStr.includes(' ig ')) platform = 'Instagram';
             else if (codeStr.includes('linkedin') || codeStr.includes(' li ')) platform = 'LinkedIn';
             else if (codeStr.includes('twitter') || codeStr.includes(' x ')) platform = 'X';
         }
         
-        if (mappings.type === -1) {
+        if (finalMappings.type === -1) {
             if (codeStr.includes('video')) type = 'Video';
             else if (codeStr.includes('carousel')) type = 'Carousel';
             else if (codeStr.includes('story')) type = 'Story';
@@ -266,11 +290,11 @@ const App = () => {
             platform: normalizePlatform(platform),
             type: normalizeType(type),
             kpi: 'TRAFFIC',
-            primaryText: mappings.primaryText > -1 ? columns[mappings.primaryText] || '' : '',
-            headline: mappings.headline > -1 ? columns[mappings.headline] || '' : '',
-            linkDesc: mappings.linkDesc > -1 ? columns[mappings.linkDesc] || '' : '',
-            visualText: mappings.visualText > -1 ? columns[mappings.visualText] || '' : '',
-            notes: mappings.notes > -1 ? columns[mappings.notes] || '' : '',
+            primaryText: finalMappings.primaryText > -1 ? columns[finalMappings.primaryText] || '' : '',
+            headline: finalMappings.headline > -1 ? columns[finalMappings.headline] || '' : '',
+            linkDesc: finalMappings.linkDesc > -1 ? columns[finalMappings.linkDesc] || '' : '',
+            visualText: finalMappings.visualText > -1 ? columns[finalMappings.visualText] || '' : '',
+            notes: finalMappings.notes > -1 ? columns[finalMappings.notes] || '' : '',
         });
     }
 
@@ -279,8 +303,11 @@ const App = () => {
             if (prev.length === 1 && prev[0].primaryText === '') return newRows;
             return [...prev, ...newRows];
         });
-        alert(`Success! ${newRows.length} items imported.`);
     }
+    
+    // Close Wizard
+    setShowImportModal(false);
+    setImportWizardData(null);
   };
 
   const normalizePlatform = (val) => {
@@ -341,7 +368,7 @@ const App = () => {
               <Target className="w-6 h-6 text-indigo-600" />
               Social Campaign Cockpit
             </h1>
-            <p className="text-xs text-slate-500 mt-1">Optimization Engine V3.0 (XLSX Support)</p>
+            <p className="text-xs text-slate-500 mt-1">Optimization Engine V4.0 (Import Wizard)</p>
           </div>
           <div className="flex gap-3">
              {/* Hidden Input for Import */}
@@ -371,12 +398,24 @@ const App = () => {
         </div>
       </header>
 
+      {/* IMPORT WIZARD MODAL */}
+      {showImportModal && importWizardData && (
+        <ImportWizardModal 
+          headers={importWizardData.headers}
+          initialMappings={importWizardData.mappings}
+          onConfirm={finalizeImport}
+          onCancel={() => {
+             setShowImportModal(false);
+             setImportWizardData(null);
+          }}
+        />
+      )}
+
       {/* MAIN GRID */}
       <main className="max-w-[1700px] mx-auto py-6 overflow-x-auto px-4">
         <div className="bg-white border border-slate-200 shadow-sm rounded-lg min-w-[1550px]">
           
           {/* Table Header */}
-          {/* Added 'Code' column width at start */}
           <div className="grid grid-cols-[150px_120px_100px_140px_1.5fr_1fr_1fr_0.8fr_0.8fr_50px] gap-0 border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wider sticky top-0 z-10">
             <div className="p-3 border-r border-slate-100">Code / Case</div>
             <div className="p-3 border-r border-slate-100">Platform</div>
@@ -415,6 +454,104 @@ const App = () => {
             </button>
         </div>
       </main>
+    </div>
+  );
+};
+
+/**
+ * IMPORT WIZARD MODAL COMPONENT
+ */
+const ImportWizardModal = ({ headers, initialMappings, onConfirm, onCancel }) => {
+  const [mappings, setMappings] = useState(initialMappings);
+
+  const handleMappingChange = (fieldKey, columnIndex) => {
+    setMappings(prev => ({
+      ...prev,
+      [fieldKey]: parseInt(columnIndex)
+    }));
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+        
+        {/* Modal Header */}
+        <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-lg">
+          <div>
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-indigo-600" />
+              Map Your Columns
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">Match columns from your file to the tool's fields.</p>
+          </div>
+          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Modal Body (Scrollable) */}
+        <div className="p-6 overflow-y-auto flex-grow">
+          <div className="space-y-4">
+            {APP_FIELDS.map((field) => {
+              const currentMapping = mappings[field.key];
+              const isUnmapped = currentMapping === -1;
+              
+              return (
+                <div key={field.key} className="flex items-center gap-4 p-3 border border-slate-100 rounded bg-slate-50/50">
+                  {/* Field Label */}
+                  <div className="w-1/3">
+                    <div className="text-sm font-semibold text-slate-700">{field.label}</div>
+                    {field.required && <span className="text-[10px] text-red-500 font-medium">Recommended</span>}
+                  </div>
+
+                  {/* Arrow Icon */}
+                  <ArrowRight className="w-4 h-4 text-slate-300" />
+
+                  {/* Column Selector */}
+                  <div className="flex-grow">
+                    <select 
+                      className={`w-full text-sm p-2 rounded border focus:ring-2 focus:ring-indigo-500 outline-none ${
+                        isUnmapped ? 'border-slate-300 text-slate-400 bg-white' : 'border-indigo-300 bg-indigo-50 text-indigo-700 font-medium'
+                      }`}
+                      value={currentMapping}
+                      onChange={(e) => handleMappingChange(field.key, e.target.value)}
+                    >
+                      <option value="-1">(Ignore Column)</option>
+                      {headers.map((header, idx) => (
+                        <option key={idx} value={idx}>
+                          {header || `Column ${idx + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-6 p-3 bg-blue-50 text-blue-700 text-xs rounded border border-blue-100 flex gap-2">
+             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+             <p>Tip: Set columns to <strong>(Ignore Column)</strong> if you want to leave a field blank or if it doesn't exist in your file.</p>
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="p-5 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-lg">
+          <button 
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded transition-colors"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={() => onConfirm(mappings)}
+            className="px-6 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-sm transition-colors flex items-center gap-2"
+          >
+            Complete Import <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+
+      </div>
     </div>
   );
 };
